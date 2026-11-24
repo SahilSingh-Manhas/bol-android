@@ -4,6 +4,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val buildNumber = (project.findProperty("buildNumber") as String?)?.toIntOrNull() ?: 1
+
 android {
     namespace = "app.bol.lyrics"
     compileSdk = 35
@@ -12,11 +14,24 @@ android {
         applicationId = "app.bol.lyrics"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = buildNumber
+        versionName = "1.0.$buildNumber"
+    }
+
+    // Fixed key: har build same key se sign hota hai, isliye naya APK purane ke upar update ho jata hai.
+    signingConfigs {
+        create("bol") {
+            storeFile = file("bol.keystore")
+            storePassword = "bolbolbol"
+            keyAlias = "bol"
+            keyPassword = "bolbolbol"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("bol")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(

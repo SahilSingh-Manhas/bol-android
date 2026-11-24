@@ -93,6 +93,37 @@ class BolViewModel(app: Application) : AndroidViewModel(app) {
     var history by mutableStateOf(readHistory())
 
     val player = PlayerController()
+    var updateName by mutableStateOf<String?>(null)
+    var updateUrl by mutableStateOf<String?>(null)
+
+    init {
+        checkUpdate()
+    }
+
+    private fun checkUpdate() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val request = okhttp3.Request.Builder()
+                    .url("https://api.github.com/repos/SahilSingh-Manhas/bol-android/releases/latest")
+                    .header("Accept", "application/vnd.github+json")
+                    .build()
+                val body = okhttp3.OkHttpClient().newCall(request).execute().use { it.body?.string() } ?: return@runCatching
+                val json = JSONObject(body)
+                val tag = json.optString("tag_name")
+                val latest = tag.substringAfterLast('.').toLongOrNull() ?: return@runCatching
+                val app = getApplication<Application>()
+                val current = app.packageManager.getPackageInfo(app.packageName, 0).longVersionCode
+                val assets = json.optJSONArray("assets")
+                val apk = assets?.optJSONObject(0)?.optString("browser_download_url").orEmpty()
+                if (latest > current && apk.isNotBlank()) {
+                    withContext(Dispatchers.Main) {
+                        updateName = tag
+                        updateUrl = apk
+                    }
+                }
+            }
+        }
+    }
     var duration by mutableFloatStateOf(0f)
     val match: LyricMatch? get() = song?.matches?.getOrNull(picked)
 
@@ -287,6 +318,21 @@ fun BolScreen(sharedUrl: String?, model: BolViewModel = viewModel()) {
             contentPadding = PaddingValues(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            model.updateUrl?.let { link ->
+                item {
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Surface).padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("Naya update aaya: ${model.updateName}", color = Fg, modifier = Modifier.weight(1f))
+                        Button(
+                            onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link))) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = AccentInk),
+                        ) { Text("Update") }
+                    }
+                }
+            }
             item {
                 Text("Bol", color = Accent, fontSize = 40.sp, fontWeight = FontWeight.SemiBold)
                 Text("YouTube Music ka link daalo. Synced lyrics yahin chalenge.", color = Muted)
