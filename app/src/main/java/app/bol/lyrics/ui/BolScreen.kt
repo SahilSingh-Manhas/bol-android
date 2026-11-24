@@ -138,6 +138,13 @@ class BolViewModel(app: Application) : AndroidViewModel(app) {
         if (d > 0f) duration = d
     }
 
+    fun onPlayerError(code: Int) {
+        error = when (code) {
+            101, 150, 152, 153 -> "Is video ka owner embed allow nahi karta (error $code). Neeche YouTube button se kholo."
+            else -> "Player error $code. YouTube button se kholo."
+        }
+    }
+
     fun onPlayerState(state: Int) {
         playing = state == 1 || state == 3
     }
@@ -336,6 +343,7 @@ fun BolScreen(sharedUrl: String?, model: BolViewModel = viewModel()) {
                             controller = model.player,
                             onTime = model::onPlayerTime,
                             onState = model::onPlayerState,
+                            onError = model::onPlayerError,
                             modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(16.dp)),
                         )
                     }

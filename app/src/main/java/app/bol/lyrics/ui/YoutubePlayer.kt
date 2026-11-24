@@ -6,6 +6,9 @@ import android.os.Looper
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebViewClient
 import android.webkit.WebView
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -24,6 +27,7 @@ class PlayerController {
 private class Bridge(
     val onTime: (Float, Float) -> Unit,
     val onState: (Int) -> Unit,
+    val onError: (Int) -> Unit,
 ) {
     private val main = Handler(Looper.getMainLooper())
 
@@ -36,7 +40,14 @@ private class Bridge(
     fun state(s: Int) {
         main.post { onState(s) }
     }
+
+    @JavascriptInterface
+    fun error(code: Int) {
+        main.post { onError(code) }
+    }
 }
+
+private const val ORIGIN = "https://bol-player.local"
 
 private fun html(videoId: String) = """
 <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -47,8 +58,8 @@ private fun html(videoId: String) = """
 var player;
 function onYouTubeIframeAPIReady(){
   player=new YT.Player('p',{width:'100%',height:'100%',videoId:'$videoId',
-    playerVars:{playsinline:1,rel:0,modestbranding:1},
-    events:{onStateChange:function(e){Bol.state(e.data)}}});
+    playerVars:{playsinline:1,rel:0,modestbranding:1,enablejsapi:1,origin:'$ORIGIN'},
+    events:{onStateChange:function(e){Bol.state(e.data)},onError:function(e){Bol.error(e.data)}}});
 }
 setInterval(function(){
   if(player&&player.getCurrentTime){Bol.time(player.getCurrentTime(),player.getDuration()||0)}
@@ -63,6 +74,7 @@ fun YoutubePlayer(
     controller: PlayerController,
     onTime: (Float, Float) -> Unit,
     onState: (Int) -> Unit,
+    onError: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     AndroidView(
@@ -77,8 +89,17 @@ fun YoutubePlayer(
                 settings.domStorageEnabled = true
                 settings.mediaPlaybackRequiresUserGesture = false
                 webChromeClient = WebChromeClient()
-                addJavascriptInterface(Bridge(onTime, onState), "Bol")
-                loadDataWithBaseURL("https://www.youtube.com", html(videoId), "text/html", "utf-8", null)
+                addJavascriptInterface(Bridge(onTime, onState, onError), "Bol")
+                // Page ko asli https origin se serve karte hain taaki YouTube ko Referer mile.
+                webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                        if (request.url.toString().startsWith("$ORIGIN/player")) {
+                            return WebResourceResponse("text/html", "utf-8", html(videoId).byteInputStream())
+                        }
+                        return null
+                    }
+                }
+                loadUrl("$ORIGIN/player")
                 controller.web = this
             }
         },
