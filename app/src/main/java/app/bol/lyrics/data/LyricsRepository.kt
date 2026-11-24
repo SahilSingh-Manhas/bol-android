@@ -38,7 +38,7 @@ class LyricsRepository {
         return Song(id, title, author, thumb, matches, tags, cover)
     }
 
-    fun saveLrc(context: Context, song: LyricMatch, offsetSeconds: Double): String {
+    fun buildLrc(song: LyricMatch, offsetSeconds: Double): String {
         val ms = kotlin.math.round(-offsetSeconds * 1000).toInt()
         val header = buildList {
             add("[ti:${song.trackName}]")
@@ -50,8 +50,12 @@ class LyricsRepository {
             .filterNot { it.trim().startsWith("[offset:") }
             .joinToString("\n")
             .trim()
+        return "$header\n$body\n"
+    }
+
+    fun saveLrc(context: Context, song: LyricMatch, offsetSeconds: Double): String {
         val name = fileBase(song.artistName, song.trackName) + ".lrc"
-        writeDownload(context, name, "application/octet-stream", "$header\n$body\n".toByteArray())
+        writeDownload(context, name, "application/octet-stream", buildLrc(song, offsetSeconds).toByteArray())
         return name
     }
 

@@ -2,7 +2,7 @@
 
 YouTube Music ya YouTube ka link daalo. App synced lyrics, square cover, aur LRC file nikaalti hai.
 
-Kotlin + Jetpack Compose. Gaane ki audio file download nahi hoti.
+Kotlin + Jetpack Compose. Gaana YouTube player se chalta hai (audio download nahi hoti).
 
 ## Android Studio
 

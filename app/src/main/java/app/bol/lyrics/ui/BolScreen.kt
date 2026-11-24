@@ -3,6 +3,9 @@ package app.bol.lyrics.ui
 import android.app.Application
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -12,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,6 +36,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -56,9 +61,6 @@ import app.bol.lyrics.data.LyricMatch
 import app.bol.lyrics.data.LyricsRepository
 import app.bol.lyrics.data.Song
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -90,7 +92,8 @@ class BolViewModel(app: Application) : AndroidViewModel(app) {
     var cover by mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
     var history by mutableStateOf(readHistory())
 
-    private var ticker: Job? = null
+    val player = PlayerController()
+    var duration by mutableFloatStateOf(0f)
     val match: LyricMatch? get() = song?.matches?.getOrNull(picked)
 
     fun open(raw: String) {
@@ -100,7 +103,8 @@ class BolViewModel(app: Application) : AndroidViewModel(app) {
         loading = true
         error = null
         note = null
-        stop()
+        playing = false
+        duration = 0f
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { repo.load(text) } }
             loading = false
@@ -118,29 +122,62 @@ class BolViewModel(app: Application) : AndroidViewModel(app) {
 
     fun choose(index: Int) {
         picked = index
-        time = 0f
-        stop()
     }
 
     fun toggle() {
-        val span = span()
-        if (playing) {
-            stop()
-            return
-        }
-        if (time >= span) time = 0f
-        playing = true
-        ticker = viewModelScope.launch {
-            while (isActive && playing) {
-                delay(100)
-                time = (time + 0.1f).coerceAtMost(span())
-                if (time >= span()) stop()
-            }
-        }
+        if (playing) player.pause() else player.play()
     }
 
     fun seek(value: Float) {
         time = value.coerceIn(0f, span())
+        player.seek(time)
+    }
+
+    fun onPlayerTime(t: Float, d: Float) {
+        time = t
+        if (d > 0f) duration = d
+    }
+
+    fun onPlayerState(state: Int) {
+        playing = state == 1 || state == 3
+    }
+
+    fun copyText(label: String, text: String) {
+        val clipboard = getApplication<Application>().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+        error = null
+        note = "$label copy ho gaya"
+    }
+
+    fun copySynced() {
+        val current = match ?: return
+        if (current.syncedLyrics.isBlank()) {
+            error = "Synced lyrics nahi hain."
+            return
+        }
+        copyText("Synced lyrics", repo.buildLrc(current, offset.toDouble()))
+    }
+
+    fun copyPlain() {
+        val current = match ?: return
+        val text = current.plainLyrics.ifBlank { current.lines.joinToString("\n") { it.text } }
+        if (text.isBlank()) {
+            error = "Lyrics nahi hain."
+            return
+        }
+        copyText("Lyrics", text)
+    }
+
+    fun copyTags() {
+        val t = song?.tags ?: return
+        copyText(
+            "Tags",
+            listOf(
+                "Title" to t.title, "Album" to t.album, "Artist" to t.artist,
+                "Album-Artist" to t.albumArtist, "Genre" to t.genre,
+                "Track number" to t.trackNumber, "Year" to t.year,
+            ).joinToString("\n") { "${it.first}: ${it.second}" },
+        )
     }
 
     fun nudge(delta: Float) {
@@ -183,15 +220,10 @@ class BolViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun span(): Float {
+        if (duration > 0f) return duration
         val chosen = match
         val last = chosen?.lines?.lastOrNull()?.time ?: 0.0
         return max(chosen?.duration ?: 0.0, last + 8.0).toFloat().coerceAtLeast(30f)
-    }
-
-    private fun stop() {
-        playing = false
-        ticker?.cancel()
-        ticker = null
     }
 
     private fun loadCover(url: String) {
@@ -297,6 +329,17 @@ fun BolScreen(sharedUrl: String?, model: BolViewModel = viewModel()) {
                 }
             } else {
                 val match = model.match
+                item {
+                    key(song.videoId) {
+                        YoutubePlayer(
+                            videoId = song.videoId,
+                            controller = model.player,
+                            onTime = model::onPlayerTime,
+                            onState = model::onPlayerState,
+                            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(16.dp)),
+                        )
+                    }
+                }
                 item { NowPlaying(model, song, match) }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -316,6 +359,13 @@ fun BolScreen(sharedUrl: String?, model: BolViewModel = viewModel()) {
                             },
                             colors = outline(),
                         ) { Text("YouTube") }
+                    }
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { model.copySynced() }, colors = outline()) { Text("Synced copy") }
+                        OutlinedButton(onClick = { model.copyPlain() }, colors = outline()) { Text("Lyrics copy") }
+                        OutlinedButton(onClick = { model.copyTags() }, colors = outline()) { Text("Tags copy") }
                     }
                 }
                 if (song.matches.size > 1) {
@@ -364,14 +414,15 @@ private fun NowPlaying(model: BolViewModel, song: Song, match: LyricMatch?) {
             Text(match?.artistName ?: song.author, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
-    val span = max(match?.duration ?: 0.0, (match?.lines?.lastOrNull()?.time ?: 0.0) + 8.0).toFloat().coerceAtLeast(30f)
+    val span = if (model.duration > 0f) model.duration
+    else max(match?.duration ?: 0.0, (match?.lines?.lastOrNull()?.time ?: 0.0) + 8.0).toFloat().coerceAtLeast(30f)
     Button(
         onClick = { model.toggle() },
         colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = AccentInk),
     ) { Text(if (model.playing) "Roko" else "Chalao") }
     Slider(value = model.time.coerceIn(0f, span), onValueChange = { model.seek(it) }, valueRange = 0f..span)
     Text("${clock(model.time)} / ${clock(span)}", color = Muted)
-    Text("Timer gaane ke saath chalao. YouTube button se gaana khulega.", color = Muted, fontSize = 13.sp)
+    Text("Gaana upar ke player mein chalta hai, lyrics saath mein sync hote hain.", color = Muted, fontSize = 13.sp)
 }
 
 @Composable
